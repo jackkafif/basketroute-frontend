@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';   // React Hooks for state & effects :contentReference[oaicite:0]{index=0}
-import axios from 'axios';                            // Promise-based HTTP client :contentReference[oaicite:1]{index=1}
 
 // Ensure you have a `.env` file at your project root with, e.g.:
 // VITE_API_BASE_URL=http://localhost:5000
@@ -35,12 +34,9 @@ export default function App() {
 
   // Fetch the list of available stores on component mount :contentReference[oaicite:3]{index=3}
   useEffect(() => {
-    axios.get<Store[]>(`${API_BASE}/stores`)
-      .then(res => setStores(res.data))
-      .catch(err => {
-        console.error(err);
-        setError('Failed to load stores');
-      });
+      fetch(`${API_BASE}/stores`)
+        .then(res => res.json())
+        .then(setStores)
   }, []);
 
   const handleOptimize = async () => {
@@ -51,10 +47,12 @@ export default function App() {
       .filter(Boolean);
 
     try {
-      const res = await axios.post<PlanResponse>(
-        `${API_BASE}/optimize`,
-        { items }
-      );  // axios .post takes (url, data) :contentReference[oaicite:4]{index=4}
+      const response = await fetch(`${API_BASE}/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items })
+      });
+      const res = await response.json();
 
       if (res.data.status === 'success') {
         setPlan(res.data.plan);
