@@ -2,13 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 
-const API_BASE = "http://127.0.0.1:5000";
-
-// 'use client';
-
-// import React, { useState, useEffect } from 'react';
-
-// const API_BASE = "https://api.basketroute.jackkafif.com";
+const API_BASE = "https://api.basketroute.jackkafif.com";
 
 interface Product {
   id: number;
