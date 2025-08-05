@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';   // React Hooks for state &
 // Ensure you have a `.env` file at your project root with, e.g.:
 // VITE_API_BASE_URL=http://localhost:5000
 // Only variables prefixed VITE_ are exposed to import.meta.env :contentReference[oaicite:2]{index=2}
-const API_BASE = import.meta.env.VITE_API_BASE_URL;
+const API_BASE = "https://api.basketroute.jackkafif.com";
 
 interface Store {
   id: number;
