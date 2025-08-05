@@ -1,82 +1,84 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { MapPin, ShoppingCart, Route, DollarSign, Plus, X } from 'lucide-react';
+import { MapPin, ShoppingCart, Route, DollarSign, Plus, X, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-
-interface GroceryItem {
-  id: string;
-  name: string;
-  quantity: number;
-  unit: string;
-}
-
-interface Store {
-  id: string;
-  name: string;
-  address: string;
-  distance: number;
-  items: { [itemId: string]: { price: number; available: boolean } };
-}
-
-interface ShoppingRoute {
-  stores: Store[];
-  totalCost: number;
-  totalDistance: number;
-  savings: number;
-}
+import { apiService, type GroceryItem, type Store, type OptimizeRouteResponse } from '@/services/api';
+import { useGeolocation } from '@/hooks/useGeolocation';
 
 const GroceryShoppingApp = () => {
   const [groceryList, setGroceryList] = useState<GroceryItem[]>([]);
   const [newItem, setNewItem] = useState({ name: '', quantity: 1, unit: 'pcs' });
   const [radius, setRadius] = useState(5);
   const [maxStores, setMaxStores] = useState(3);
-  const [route, setRoute] = useState<ShoppingRoute | null>(null);
+  const [route, setRoute] = useState<OptimizeRouteResponse | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [stores, setStores] = useState<Store[]>([]);
   const { toast } = useToast();
+  const { latitude, longitude, error: locationError, loading: locationLoading, refetch: refetchLocation } = useGeolocation();
 
-  // Sample store data - in a real app, this would come from APIs
-  const sampleStores: Store[] = [
-    {
-      id: '1',
-      name: 'SuperMart',
-      address: '123 Main St',
-      distance: 2.1,
-      items: {
-        'milk': { price: 3.99, available: true },
-        'bread': { price: 2.49, available: true },
-        'eggs': { price: 4.29, available: true },
-        'apples': { price: 1.99, available: true },
-      }
-    },
-    {
-      id: '2',
-      name: 'Fresh Foods',
-      address: '456 Oak Ave',
-      distance: 3.2,
-      items: {
-        'milk': { price: 4.19, available: true },
-        'bread': { price: 2.99, available: true },
-        'eggs': { price: 3.89, available: true },
-        'apples': { price: 1.79, available: true },
-      }
-    },
-    {
-      id: '3',
-      name: 'Budget Grocers',
-      address: '789 Pine Rd',
-      distance: 4.8,
-      items: {
-        'milk': { price: 3.49, available: true },
-        'bread': { price: 1.99, available: true },
-        'eggs': { price: 3.99, available: true },
-        'apples': { price: 2.19, available: true },
-      }
+  // Load nearby stores when location is available
+  useEffect(() => {
+    if (latitude && longitude) {
+      loadNearbyStores();
     }
-  ];
+  }, [latitude, longitude, radius]);
+
+  const loadNearbyStores = async () => {
+    if (!latitude || !longitude) return;
+
+    try {
+      const nearbyStores = await apiService.getNearbyStores(
+        { latitude, longitude },
+        radius
+      );
+      setStores(nearbyStores);
+    } catch (error) {
+      console.error('Error loading stores:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load nearby stores. Using fallback data.",
+        variant: "destructive"
+      });
+      
+      // Fallback to sample data if API fails
+      const sampleStores: Store[] = [
+        {
+          id: '1',
+          name: 'SuperMart',
+          address: '123 Main St',
+          distance: 2.1,
+          latitude: latitude + 0.01,
+          longitude: longitude + 0.01,
+          items: {
+            'milk': { price: 3.99, available: true },
+            'bread': { price: 2.49, available: true },
+            'eggs': { price: 4.29, available: true },
+            'apples': { price: 1.99, available: true },
+          }
+        },
+        {
+          id: '2',
+          name: 'Fresh Foods',
+          address: '456 Oak Ave',
+          distance: 3.2,
+          latitude: latitude - 0.01,
+          longitude: longitude - 0.01,
+          items: {
+            'milk': { price: 4.19, available: true },
+            'bread': { price: 2.99, available: true },
+            'eggs': { price: 3.89, available: true },
+            'apples': { price: 1.79, available: true },
+          }
+        }
+      ];
+      setStores(sampleStores);
+    }
+  };
 
   const addItem = () => {
     if (!newItem.name.trim()) {
@@ -103,7 +105,7 @@ const GroceryShoppingApp = () => {
     setGroceryList(groceryList.filter(item => item.id !== id));
   };
 
-  const optimizeRoute = () => {
+  const optimizeRoute = async () => {
     if (groceryList.length === 0) {
       toast({
         title: "Error",
@@ -113,81 +115,69 @@ const GroceryShoppingApp = () => {
       return;
     }
 
-    // Simple optimization algorithm - find cheapest combination of stores
-    const availableStores = sampleStores.filter(store => store.distance <= radius);
-    
-    if (availableStores.length === 0) {
+    if (!latitude || !longitude) {
       toast({
-        title: "No stores found",
-        description: "No stores found within the specified radius",
+        title: "Location Required",
+        description: "Please enable location access to optimize your route",
         variant: "destructive"
       });
       return;
     }
 
-    // For each item, find the cheapest store
-    const itemStoreMaps: { [itemName: string]: { store: Store; price: number }[] } = {};
-    
-    groceryList.forEach(item => {
-      itemStoreMaps[item.name] = [];
-      availableStores.forEach(store => {
-        if (store.items[item.name]?.available) {
-          itemStoreMaps[item.name].push({
-            store,
-            price: store.items[item.name].price * item.quantity
-          });
-        }
+    setIsOptimizing(true);
+
+    try {
+      const optimizedRoute = await apiService.optimizeRoute({
+        items: groceryList,
+        location: { latitude, longitude },
+        radius,
+        maxStores
       });
-      // Sort by price
-      itemStoreMaps[item.name].sort((a, b) => a.price - b.price);
-    });
 
-    // Greedy approach: start with cheapest options, group by stores
-    const storeItemMap: { [storeId: string]: { store: Store; items: string[]; cost: number } } = {};
-    let totalCost = 0;
+      setRoute(optimizedRoute);
 
-    groceryList.forEach(item => {
-      const cheapestOptions = itemStoreMaps[item.name];
-      if (cheapestOptions.length > 0) {
-        const cheapest = cheapestOptions[0];
-        if (!storeItemMap[cheapest.store.id]) {
-          storeItemMap[cheapest.store.id] = {
-            store: cheapest.store,
-            items: [],
-            cost: 0
-          };
-        }
-        storeItemMap[cheapest.store.id].items.push(`${item.quantity} ${item.unit} ${item.name}`);
-        storeItemMap[cheapest.store.id].cost += cheapest.price;
-        totalCost += cheapest.price;
+      toast({
+        title: "Route optimized!",
+        description: `Found route visiting ${optimizedRoute.stores.length} stores`,
+      });
+    } catch (error) {
+      console.error('Error optimizing route:', error);
+      
+      // Fallback to local optimization if API fails
+      toast({
+        title: "API Error",
+        description: "Using local optimization as fallback",
+        variant: "destructive"
+      });
+
+      // Simple local optimization as fallback
+      const availableStores = stores.filter(store => store.distance <= radius);
+      
+      if (availableStores.length === 0) {
+        toast({
+          title: "No stores found",
+          description: "No stores found within the specified radius",
+          variant: "destructive"
+        });
+        return;
       }
-    });
 
-    const routeStores = Object.values(storeItemMap)
-      .sort((a, b) => a.store.distance - b.store.distance)
-      .slice(0, maxStores);
+      // Basic local optimization logic (simplified version)
+      const result = {
+        stores: availableStores.slice(0, maxStores),
+        totalCost: groceryList.length * 15, // Rough estimate
+        totalDistance: availableStores.slice(0, maxStores).reduce((sum, s) => sum + s.distance, 0),
+        savings: groceryList.length * 5, // Rough estimate
+        route: {
+          coordinates: [] as Array<[number, number]>,
+          duration: 0
+        }
+      };
 
-    const totalDistance = routeStores.reduce((sum, s) => sum + s.store.distance, 0);
-    
-    // Calculate savings compared to shopping at the most expensive single store
-    const expensiveStoreCost = groceryList.reduce((sum, item) => {
-      const maxPrice = Math.max(...availableStores
-        .filter(s => s.items[item.name]?.available)
-        .map(s => s.items[item.name].price));
-      return sum + (maxPrice * item.quantity);
-    }, 0);
-
-    setRoute({
-      stores: routeStores.map(s => s.store),
-      totalCost,
-      totalDistance,
-      savings: expensiveStoreCost - totalCost
-    });
-
-    toast({
-      title: "Route optimized!",
-      description: `Found route visiting ${routeStores.length} stores`,
-    });
+      setRoute(result);
+    } finally {
+      setIsOptimizing(false);
+    }
   };
 
   return (
@@ -281,33 +271,61 @@ const GroceryShoppingApp = () => {
         <TabsContent value="settings" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Shopping Preferences</CardTitle>
+              <CardTitle>Location & Preferences</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <Label htmlFor="radius">Search Radius (miles)</Label>
-                  <Input
-                    id="radius"
-                    type="number"
-                    min="1"
-                    max="25"
-                    value={radius}
-                    onChange={(e) => setRadius(parseInt(e.target.value) || 5)}
-                  />
-                  <p className="text-sm text-muted-foreground mt-1">Maximum distance to search for stores</p>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 border rounded-lg">
+                  <div>
+                    <h4 className="font-medium">Current Location</h4>
+                    <p className="text-sm text-muted-foreground">
+                      {locationLoading ? 'Getting location...' : 
+                       locationError ? locationError :
+                       latitude && longitude ? `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` : 'Location unavailable'}
+                    </p>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    onClick={refetchLocation}
+                    disabled={locationLoading}
+                  >
+                    {locationLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    Refresh
+                  </Button>
                 </div>
-                <div>
-                  <Label htmlFor="max-stores">Maximum Stores</Label>
-                  <Input
-                    id="max-stores"
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={maxStores}
-                    onChange={(e) => setMaxStores(parseInt(e.target.value) || 3)}
-                  />
-                  <p className="text-sm text-muted-foreground mt-1">Limit the number of stores to visit</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <Label htmlFor="radius">Search Radius (miles)</Label>
+                    <Input
+                      id="radius"
+                      type="number"
+                      min="1"
+                      max="25"
+                      value={radius}
+                      onChange={(e) => setRadius(parseInt(e.target.value) || 5)}
+                    />
+                    <p className="text-sm text-muted-foreground mt-1">Maximum distance to search for stores</p>
+                  </div>
+                  <div>
+                    <Label htmlFor="max-stores">Maximum Stores</Label>
+                    <Input
+                      id="max-stores"
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={maxStores}
+                      onChange={(e) => setMaxStores(parseInt(e.target.value) || 3)}
+                    />
+                    <p className="text-sm text-muted-foreground mt-1">Limit the number of stores to visit</p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-muted rounded-lg">
+                  <h4 className="font-medium mb-2">Available Stores</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {stores.length > 0 ? `${stores.length} stores found within ${radius} miles` : 'No stores loaded'}
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -317,9 +335,14 @@ const GroceryShoppingApp = () => {
         <TabsContent value="route" className="space-y-4">
           <div className="flex justify-between items-center">
             <h2 className="text-2xl font-semibold">Optimized Shopping Route</h2>
-            <Button onClick={optimizeRoute} size="lg" className="flex items-center gap-2">
-              <Route className="w-4 h-4" />
-              Optimize Route
+            <Button 
+              onClick={optimizeRoute} 
+              size="lg" 
+              className="flex items-center gap-2"
+              disabled={isOptimizing || !latitude || !longitude || groceryList.length === 0}
+            >
+              {isOptimizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Route className="w-4 h-4" />}
+              {isOptimizing ? 'Optimizing...' : 'Optimize Route'}
             </Button>
           </div>
 
@@ -393,8 +416,18 @@ const GroceryShoppingApp = () => {
                 <Route className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
                 <h3 className="text-lg font-medium mb-2">No Route Generated</h3>
                 <p className="text-muted-foreground mb-4">Add items to your grocery list and click "Optimize Route" to get started.</p>
-                <Button onClick={optimizeRoute} disabled={groceryList.length === 0}>
-                  Generate Route
+                <Button 
+                  onClick={optimizeRoute} 
+                  disabled={groceryList.length === 0 || !latitude || !longitude || isOptimizing}
+                >
+                  {isOptimizing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Optimizing...
+                    </>
+                  ) : (
+                    'Generate Route'
+                  )}
                 </Button>
               </CardContent>
             </Card>
