@@ -1,109 +1,221 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';   // React Hooks for state & effects :contentReference[oaicite:0]{index=0}
+import React, { useState, useEffect } from 'react';
 
-// Ensure you have a `.env` file at your project root with, e.g.:
-// VITE_API_BASE_URL=http://localhost:5000
-// Only variables prefixed VITE_ are exposed to import.meta.env :contentReference[oaicite:2]{index=2}
-const API_BASE = "https://api.basketroute.jackkafif.com";
+const API_BASE = "http://127.0.0.1:5000";
 
-interface Store {
+// 'use client';
+
+// import React, { useState, useEffect } from 'react';
+
+// const API_BASE = "https://api.basketroute.jackkafif.com";
+
+interface Product {
   id: number;
   name: string;
-  lat: number;
-  lon: number;
+  category?: string;
+  unit?: string;
 }
 
-interface PlanStep {
-  store_name: string;
-  item_name: string;
+interface PlanItem {
+  item: string;
+  quantity: number;
+}
+
+interface PlanStore {
+  store: string;
+  items: PlanItem[];
 }
 
 interface PlanResponse {
-  plan: PlanStep[];
-  total_cost: number;
+  plan: PlanStore[];
+  cost: number;
   status: string;
+  distance: number;
 }
 
 export default function App() {
-  const [stores, setStores] = useState<Store[]>([]);
-  const [itemsInput, setItemsInput] = useState('');
-  const [plan, setPlan] = useState<PlanStep[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [quantities, setQuantities] = useState<Record<number, number>>({});
+  const [address, setAddress] = useState('');
+  const [location, setLocation] = useState<{ lat: number; lon: number } | null>(null);
+  const [plan, setPlan] = useState<PlanStore[]>([]);
+  const [totalCost, setTotalCost] = useState<number | null>(null);
+  const [totalDistance, setTotalDistance] = useState<number | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string| null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Fetch the list of available stores on component mount :contentReference[oaicite:3]{index=3}
+  // Fetch products on mount
   useEffect(() => {
-      fetch(`${API_BASE}/stores`)
-        .then(res => res.json())
-        .then(setStores)
+    fetch(`${API_BASE}/api/products`)
+      .then(res => res.json())
+      .then(setProducts)
+      .catch(() => setError('Failed to load products'));
   }, []);
 
-  const handleOptimize = async () => {
-    setLoading(true);
-    setError(null);
-    const items = itemsInput.split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
+  const handleUseLocation = () => {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not supported by your browser');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+        setAddress('');
+        setError(null);
+      },
+      () => setError('Unable to retrieve your location')
+    );
+  };
 
+  const handleOptimize = async () => {
+    setError(null);
+
+    // Build items with quantities > 0
+    const items = Object.entries(quantities)
+      .map(([id, qty]) => ({ product_id: Number(id), quantity: qty }))
+      .filter(item => item.quantity > 0);
+
+    if (items.length === 0) {
+      setError('Please select at least one product and quantity');
+      return;
+    }
+    if (!location && !address.trim()) {
+      setError('Please enter your address or use your current location');
+      return;
+    }
+
+    setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/optimize`, {
+      const payload: any = { items };
+      if (location) payload.location = location;
+      else payload.address = address.trim();
+
+      const response = await fetch(`${API_BASE}/api/optimize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items })
+        body: JSON.stringify(payload),
       });
-      const res = await response.json();
 
-      if (res.data.status === 'success') {
-        setPlan(res.data.plan);
-      } else {
-        setError(`Optimization failed: ${res.data.status}`);
+      // throw if status>=400 so we can catch
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`HTTP ${response.status}: ${text}`);
       }
-    } catch (err) {
+
+      const res: PlanResponse = await response.json();
+
+      setPlan(res.plan);
+      setTotalCost(res.cost);
+      setTotalDistance(res.distance);
+      setStatus(res.status);
+    } catch (err: any) {
       console.error(err);
-      setError('Error optimizing route');
+      setError(err.message || 'Error optimizing route');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="p-8 max-w-xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6">BasketRoute</h1>
+    <div className="p-8 max-w-3xl mx-auto space-y-8">
+      <h1 className="text-3xl font-bold">BasketRoute</h1>
 
-      <div className="mb-4">
-        <label className="block mb-1 font-medium">Items (comma separated):</label>
-        <input
-          type="text"
-          value={itemsInput}
-          onChange={e => setItemsInput(e.currentTarget.value)}
-          className="w-full border rounded p-2"
-          placeholder="e.g. milk, eggs, bread"
-        />
+      {/* Location Input */}
+      <div className="space-y-2">
+        <h2 className="text-xl font-semibold">Your Location</h2>
+        <div className="flex items-center space-x-4">
+          <input
+            type="text"
+            value={address}
+            onChange={e => {
+              setAddress(e.currentTarget.value);
+              setLocation(null);
+            }}
+            placeholder="Enter your address"
+            className="flex-1 border rounded p-2"
+            disabled={!!location}
+          />
+          <button
+            onClick={handleUseLocation}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          >
+            Use My Location
+          </button>
+        </div>
+        {location && (
+          <p className="text-gray-600">
+            🎯 Using coords: {location.lat.toFixed(4)}, {location.lon.toFixed(4)}
+          </p>
+        )}
       </div>
 
-      <button
-        onClick={handleOptimize}
-        disabled={loading}
-        className={`px-4 py-2 rounded text-white ${
-          loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
-        }`}
-      >
-        {loading ? 'Optimizing…' : 'Optimize Route'}
-      </button>
+      {/* Products Grid */}
+      <div>
+        <h2 className="text-xl font-semibold mb-4">Select Products & Quantities</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {products.map(product => (
+            <div
+              key={product.id}
+              className="border rounded-lg p-4 flex flex-col justify-between bg-white shadow-sm"
+            >
+              <h3 className="font-medium mb-2">{product.name}</h3>
+              <div className="mt-auto">
+                <label className="block text-sm mb-1">Qty:</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={quantities[product.id] ?? 0}
+                  onChange={e =>
+                    setQuantities({
+                      ...quantities,
+                      [product.id]: Math.max(0, Number(e.currentTarget.value)),
+                    })
+                  }
+                  className="w-full border rounded p-1 text-center"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      {error && <p className="mt-4 text-red-600">{error}</p>}
+      {/* Optimize Button */}
+      <div>
+        <button
+          onClick={handleOptimize}
+          disabled={loading}
+          className={`w-full py-3 rounded text-white ${
+            loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
+          }`}
+        >
+          {loading ? 'Optimizing…' : 'Optimize Route'}
+        </button>
+        {error && <p className="mt-4 text-red-600">{error}</p>}
+      </div>
 
+      {/* Plan Output */}
       {plan.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-2xl font-semibold mb-2">Optimized Plan</h2>
-          <ol className="list-decimal list-inside space-y-1">
-            {plan.map((step, i) => (
-              <li key={i}>
-                <span className="font-medium">{step.store_name}</span>: {step.item_name}
-              </li>
-            ))}
-          </ol>
+        <div className="space-y-4">
+          <h2 className="text-2xl font-semibold">Optimized Plan</h2>
+          <p className="text-lg">
+            Status: <span className="font-medium">{status}</span> | Cost:{' '}
+            <span className="font-medium">${totalCost?.toFixed(2)}</span> | Distance:{' '}
+            <span className="font-medium">{totalDistance?.toFixed(0)} m</span>
+          </p>
+          {plan.map((storeBlock, idx) => (
+            <div key={idx} className="border rounded p-4 bg-white shadow-sm">
+              <h3 className="font-semibold mb-2">{storeBlock.store}</h3>
+              <ul className="list-disc list-inside space-y-1">
+                {storeBlock.items.map((it, i) => (
+                  <li key={i}>
+                    {it.item} × {it.quantity}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
     </div>
